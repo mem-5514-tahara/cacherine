@@ -33,8 +33,10 @@ class LFUCache<K, V> extends ThreadSafeCache<K, V> {
   ///
   /// **This method is thread-safe.**
   @override
-  Iterable<K> getKeys() {
-    return Map<K, V>.of(_cache).keys;
+  Future<Iterable<K>> getKeys() async {
+    return await _lock.synchronized(() {
+      return Map<K, V>.of(_cache).keys;
+    });
   }
 
   /// Retrieves the value associated with the specified key and increments its usage count.
@@ -63,6 +65,10 @@ class LFUCache<K, V> extends ThreadSafeCache<K, V> {
   @override
   Future<void> set(K key, V value) async {
     await _lock.synchronized(() {
+      if (_cache.containsKey(key)) {
+        _cache[key] = value;
+        return;
+      }
       if (_cache.length >= maxSize) {
         _evictLFUEntry(); // Evict based on LFU policy
       }
@@ -72,7 +78,7 @@ class LFUCache<K, V> extends ThreadSafeCache<K, V> {
   }
 
   /// Performs eviction based on the LFU (Least Frequently Used) policy.
-  Future<void> _evictLFUEntry() async {
+  void _evictLFUEntry() {
     if (_cache.isEmpty) return;
 
     // Find the key with the lowest usage count
@@ -82,6 +88,20 @@ class LFUCache<K, V> extends ThreadSafeCache<K, V> {
     // Remove the key
     _cache.remove(lfuKey);
     _usageCounts.remove(lfuKey);
+  }
+
+  /// Removes the entry with the given key from the cache.
+  ///
+  /// - If the key does not exist, this call is a no-op.
+  /// - The frequency counter for the key is also discarded.
+  ///
+  /// **This method is thread-safe.**
+  @override
+  Future<void> remove(K key) async {
+    await _lock.synchronized(() {
+      _cache.remove(key);
+      _usageCounts.remove(key);
+    });
   }
 
   /// Clears the cache, removing all stored data.

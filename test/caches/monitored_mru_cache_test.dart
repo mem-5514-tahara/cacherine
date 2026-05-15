@@ -89,7 +89,7 @@ void main() {
 
       expect(await cache.get('key1'), isNull);
       expect(await cache.get('key2'), isNull);
-      expect(cache.getKeys(), isEmpty);
+      expect(await cache.getKeys(), isEmpty);
     });
 
     test('Should throw an exception if maxSize is 0 or negative', () {
@@ -98,6 +98,53 @@ void main() {
             MonitoredMRUCache<String, String>(maxSize: 0, alertConfig: config),
         throwsArgumentError,
       );
+    });
+  });
+
+  group('MonitoredMRUCache - remove()', () {
+    final config = CacheAlertConfig(notifyCallback: (_) {});
+
+    test('remove() existing key records eviction in metrics', () async {
+      final cache = MonitoredMRUCache<String, String>(
+        maxSize: 3,
+        alertConfig: config,
+      );
+      await cache.set('key1', 'value1');
+      await cache.remove('key1');
+      expect(await cache.get('key1'), isNull);
+      final stats = cache.metrics.getRecentStats(const Duration(minutes: 1));
+      expect(stats['evictions_per_minute'], equals(1));
+    });
+
+    test('remove() non-existent key does not record eviction', () async {
+      final cache = MonitoredMRUCache<String, String>(
+        maxSize: 3,
+        alertConfig: config,
+      );
+      await cache.remove('missing');
+      final stats = cache.metrics.getRecentStats(const Duration(minutes: 1));
+      expect(stats['evictions_per_minute'], equals(0));
+    });
+
+    test('capacity eviction via set() records eviction in metrics', () async {
+      final cache = MonitoredMRUCache<String, String>(
+        maxSize: 2,
+        alertConfig: config,
+      );
+      await cache.set('key1', 'value1');
+      await cache.set('key2', 'value2');
+      await cache.set('key3', 'value3'); // triggers MRU eviction of key2
+      final stats = cache.metrics.getRecentStats(const Duration(minutes: 1));
+      expect(stats['evictions_per_minute'], equals(1));
+    });
+
+    test('dispose() implements Disposable and stops the timer', () {
+      final cache = MonitoredMRUCache<String, String>(
+        maxSize: 3,
+        alertConfig: config,
+      );
+      expect(cache, isA<Disposable>());
+      expect(cache.dispose, returnsNormally);
     });
   });
 }

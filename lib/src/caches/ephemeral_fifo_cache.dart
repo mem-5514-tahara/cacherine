@@ -39,8 +39,10 @@ class EphemeralFIFOCache<K, V> extends ThreadSafeCache<K, V> {
   ///
   /// **This method is thread-safe.**
   @override
-  Iterable<K> getKeys() {
-    return Map<K, V>.of(_cache).keys;
+  Future<Iterable<K>> getKeys() async {
+    return await _lock.synchronized(() {
+      return Map<K, V>.of(_cache).keys;
+    });
   }
 
   /// Retrieves the value associated with the specified key and **removes the key from the cache**.
@@ -65,12 +67,24 @@ class EphemeralFIFOCache<K, V> extends ThreadSafeCache<K, V> {
   @override
   Future<void> set(K key, V value) async {
     await _lock.synchronized(() {
-      if (_cache.length >= maxSize) {
+      if (!_cache.containsKey(key) && _cache.length >= maxSize) {
         _cache.remove(
           _cache.keys.first,
         ); // Remove the oldest element following FIFO
       }
       _cache[key] = value; // Update value (order remains unchanged)
+    });
+  }
+
+  /// Removes the entry with the given key from the cache.
+  ///
+  /// - If the key does not exist, this call is a no-op.
+  ///
+  /// **This method is thread-safe.**
+  @override
+  Future<void> remove(K key) async {
+    await _lock.synchronized(() {
+      _cache.remove(key);
     });
   }
 

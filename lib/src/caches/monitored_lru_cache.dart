@@ -4,6 +4,7 @@ import 'package:synchronized/synchronized.dart';
 
 import '../monitorings/cache_alert_manager.dart';
 import '../monitorings/cache_monitoring.dart';
+import '../interfaces/disposable.dart';
 import '../interfaces/thread_safe_cache.dart';
 
 /// **Thread-safe LRU (Least Recently Used) Cache with Monitoring**
@@ -21,7 +22,8 @@ import '../interfaces/thread_safe_cache.dart';
 /// This cache implements the **LRU eviction policy**, meaning:
 /// - When the cache size exceeds `maxSize`, the **least recently used element is removed**.
 class MonitoredLRUCache<K, V> extends ThreadSafeCache<K, V>
-    with CacheMonitoring<K, V> {
+    with CacheMonitoring<K, V>
+    implements Disposable {
   final int maxSize;
   final LinkedHashMap<K, V> _cache = LinkedHashMap();
   final _lock = Lock();
@@ -64,8 +66,10 @@ class MonitoredLRUCache<K, V> extends ThreadSafeCache<K, V>
   ///
   /// **This method is thread-safe**, taking a snapshot of the cache before returning the keys.
   @override
-  Iterable<K> getKeys() {
-    return Map<K, V>.of(_cache).keys;
+  Future<Iterable<K>> getKeys() async {
+    return await _lock.synchronized(() {
+      return Map<K, V>.of(_cache).keys;
+    });
   }
 
   /// Retrieves the value for the specified key.
@@ -105,8 +109,25 @@ class MonitoredLRUCache<K, V> extends ThreadSafeCache<K, V>
         _cache.remove(
           _cache.keys.first,
         ); // Remove the least recently used element
+        metrics.recordEviction();
       }
       _cache[key] = value;
+    });
+  }
+
+  /// Removes the entry with the given key from the cache.
+  ///
+  /// - If the key existed, records a manual eviction via [CacheMonitoring].
+  /// - If the key does not exist, this call is a no-op.
+  ///
+  /// **This method is thread-safe**.
+  @override
+  Future<void> remove(K key) async {
+    await _lock.synchronized(() {
+      if (_cache.containsKey(key)) {
+        _cache.remove(key);
+        metrics.recordEviction();
+      }
     });
   }
 
@@ -119,6 +140,9 @@ class MonitoredLRUCache<K, V> extends ThreadSafeCache<K, V>
   Future<void> clear() async {
     await _lock.synchronized(_cache.clear);
   }
+
+  @override
+  void dispose() => _cacheAlertManager.dispose();
 
   /// Returns a string representation of the current state of the cache.
   ///

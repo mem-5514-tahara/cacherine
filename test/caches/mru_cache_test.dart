@@ -25,7 +25,7 @@ void main() {
 
       expect(await cache.get('key1'), isNull);
       expect(await cache.get('key2'), isNull);
-      expect(cache.getKeys(), isEmpty);
+      expect(await cache.getKeys(), isEmpty);
     });
   });
 
@@ -59,8 +59,8 @@ void main() {
 
       await Future.wait(futures);
 
-      expect(cache.getKeys().length, equals(5));
-      expect(cache.getKeys(), containsAll([0, 1, 2, 3, 4]));
+      expect((await cache.getKeys()).length, equals(5));
+      expect(await cache.getKeys(), containsAll([0, 1, 2, 3, 4]));
     });
   });
 
@@ -68,6 +68,30 @@ void main() {
     test('Throws ArgumentError when maxSize is 0 or less', () {
       expect(() => MRUCache<String, String>(0), throwsArgumentError);
       expect(() => MRUCache<String, String>(-1), throwsArgumentError);
+    });
+  });
+
+  group('MRUCache - remove()', () {
+    test('remove() existing key makes subsequent get() return null', () async {
+      final cache = MRUCache<String, String>(3);
+      await cache.set('key1', 'value1');
+      await cache.remove('key1');
+      expect(await cache.get('key1'), isNull);
+      expect(await cache.getKeys(), isNot(contains('key1')));
+    });
+
+    test('remove() non-existent key is a no-op', () async {
+      final cache = MRUCache<String, String>(3);
+      await cache.set('key1', 'value1');
+      await cache.remove('missing');
+      expect(await cache.get('key1'), equals('value1'));
+      expect((await cache.getKeys()).length, equals(1));
+    });
+
+    test('remove() Future completes without error', () async {
+      final cache = MRUCache<String, String>(3);
+      await cache.set('key1', 'value1');
+      await expectLater(cache.remove('key1'), completes);
     });
   });
 }

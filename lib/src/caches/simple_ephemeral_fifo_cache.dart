@@ -54,12 +54,22 @@ class SimpleEphemeralFIFOCache<K, V> extends SimpleCache<K, V> {
   /// **This method is not thread-safe.**
   @override
   void set(K key, V value) {
-    if (_cache.length >= maxSize) {
+    if (!_cache.containsKey(key) && _cache.length >= maxSize) {
       _cache.remove(
         _cache.keys.first,
       ); // Remove the oldest element following FIFO
     }
     _cache[key] = value; // Update value (order remains unchanged)
+  }
+
+  /// Removes the entry with the given key from the cache.
+  ///
+  /// - If the key does not exist, this call is a no-op.
+  ///
+  /// **This method is not thread-safe.**
+  @override
+  void remove(K key) {
+    _cache.remove(key);
   }
 
   /// Clears all data stored in the cache.

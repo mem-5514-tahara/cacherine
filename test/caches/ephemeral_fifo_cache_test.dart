@@ -32,7 +32,7 @@ void main() {
 
       expect(await cache.get('key1'), isNull);
       expect(await cache.get('key2'), isNull);
-      expect(cache.getKeys(), isEmpty);
+      expect(await cache.getKeys(), isEmpty);
     });
   });
 
@@ -58,17 +58,36 @@ void main() {
       await cache.set(
         'key1',
         'new_value1',
-      ); // key1 is placed at the most recent position
+      ); // key1's value is updated; its FIFO position does not change
 
       await cache.set(
         'key3',
         'value3',
-      ); // The oldest key, key2, should be evicted
+      ); // key1, being the oldest, should be evicted
 
-      expect(await cache.get('key2'), isNull); // key2 should be removed
-      expect(await cache.get('key1'), equals('new_value1'));
+      expect(
+        await cache.get('key1'),
+        isNull,
+      ); // key1 should be removed (oldest)
+      expect(await cache.get('key2'), equals('value2')); // key2 should remain
       expect(await cache.get('key3'), equals('value3'));
     });
+
+    test(
+      'Updating an existing key at capacity does not evict any entry',
+      () async {
+        final cache = EphemeralFIFOCache<String, String>(3);
+        await cache.set('A', 'valueA');
+        await cache.set('B', 'valueB');
+        await cache.set('C', 'valueC');
+
+        await cache.set('B', 'newValueB'); // update existing key — no eviction
+
+        expect((await cache.getKeys()).length, equals(3));
+        expect(await cache.getKeys(), containsAll(['A', 'B', 'C']));
+        expect(await cache.get('B'), equals('newValueB'));
+      },
+    );
   });
 
   group('EphemeralFIFOCache - Thread-safety Tests', () {
@@ -90,7 +109,7 @@ void main() {
       await Future.wait(futures);
 
       // Confirm that no values are left in the cache
-      expect(cache.getKeys().isEmpty, isTrue);
+      expect((await cache.getKeys()).isEmpty, isTrue);
     });
 
     test('Parallel clear() calls remove all data', () async {
@@ -105,7 +124,7 @@ void main() {
       expect(await cache.get('key1'), isNull);
       expect(await cache.get('key2'), isNull);
       expect(await cache.get('key3'), isNull);
-      expect(cache.getKeys(), isEmpty);
+      expect(await cache.getKeys(), isEmpty);
     });
 
     test(
@@ -135,6 +154,31 @@ void main() {
     test('Throws ArgumentError when maxSize is 0 or less', () {
       expect(() => EphemeralFIFOCache<String, String>(0), throwsArgumentError);
       expect(() => EphemeralFIFOCache<String, String>(-1), throwsArgumentError);
+    });
+  });
+
+  group('EphemeralFIFOCache - remove()', () {
+    test('remove() existing key makes subsequent get() return null', () async {
+      final cache = EphemeralFIFOCache<String, String>(3);
+      await cache.set('key1', 'value1');
+      await cache.remove('key1');
+      expect(await cache.get('key1'), isNull);
+      expect(await cache.getKeys(), isNot(contains('key1')));
+    });
+
+    test('remove() non-existent key is a no-op', () async {
+      final cache = EphemeralFIFOCache<String, String>(3);
+      await cache.set('key1', 'value1');
+      await cache.remove('missing');
+      // Use getKeys() — calling get() would consume the ephemeral entry
+      expect(await cache.getKeys(), contains('key1'));
+      expect((await cache.getKeys()).length, equals(1));
+    });
+
+    test('remove() Future completes without error', () async {
+      final cache = EphemeralFIFOCache<String, String>(3);
+      await cache.set('key1', 'value1');
+      await expectLater(cache.remove('key1'), completes);
     });
   });
 }

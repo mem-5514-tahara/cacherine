@@ -1,14 +1,28 @@
+import 'dart:collection';
+
 /// Cache performance metrics class
 ///
 /// This class tracks cache hit rates, miss rates, request latencies (delays),
 /// and eviction events. It provides the data necessary to measure and check
 /// cache performance over time.
+///
+/// **Bounded storage**: latency samples are kept in a rolling window of the
+/// most recent [maxLatencySamples] (1 000) entries, and eviction timestamps
+/// are kept in a rolling window of the most recent [maxEvictionSamples]
+/// (10 000) entries. This prevents unbounded heap growth in long-running
+/// caches. As a result, [averageLatency] and [getLatencyPercentile] reflect
+/// only the most recent 1 000 requests (hits and misses), and [getRecentStats] eviction counts are
+/// accurate only while the requested window fits within the retained eviction
+/// history.
 class CacheMetrics {
+  static const int maxLatencySamples = 1000;
+  static const int maxEvictionSamples = 10000;
+
   int _hits = 0;
   int _misses = 0;
   int _totalRequests = 0;
-  final List<Duration> _latencies = [];
-  final List<DateTime> _evictions = [];
+  final Queue<Duration> _latencies = Queue();
+  final Queue<DateTime> _evictions = Queue();
 
   /// The number of cache hits
   int get hits => _hits;
@@ -56,22 +70,35 @@ class CacheMetrics {
   void recordHit(Duration latency) {
     _hits++;
     _totalRequests++;
+    if (_latencies.length >= maxLatencySamples) _latencies.removeFirst();
     _latencies.add(latency);
   }
 
-  /// Records a cache miss
-  void recordMiss() {
+  /// Records a cache miss with the given request latency.
+  /// [latency] is the [Duration] representing the request's latency.
+  /// Latency is recorded for every request (hit or miss).
+  void recordMiss(Duration latency) {
     _misses++;
     _totalRequests++;
+    if (_latencies.length >= maxLatencySamples) _latencies.removeFirst();
+    _latencies.add(latency);
   }
 
   /// Records a cache eviction event
   void recordEviction() {
+    if (_evictions.length >= maxEvictionSamples) _evictions.removeFirst();
     _evictions.add(DateTime.now());
   }
 
   /// Retrieves the recent cache statistics within a given time window.
+  ///
+  /// Throws [ArgumentError] if [window] is zero or negative.
   Map<String, dynamic> getRecentStats(Duration window) {
+    if (window.inMicroseconds <= 0) {
+      throw ArgumentError(
+        'window must be a positive Duration, but was $window',
+      );
+    }
     final now = DateTime.now();
     final windowStart = now.subtract(window);
     final recentEvictions =
@@ -83,7 +110,8 @@ class CacheMetrics {
       'p95_latency': getLatencyPercentile(95).inMilliseconds,
       'p99_latency': getLatencyPercentile(99).inMilliseconds,
       'evictions_per_minute':
-          (recentEvictions * 60000) ~/ window.inMilliseconds,
+          (recentEvictions * Duration.microsecondsPerMinute) ~/
+          window.inMicroseconds,
     };
   }
 

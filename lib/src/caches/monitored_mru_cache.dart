@@ -3,6 +3,7 @@ import 'package:synchronized/synchronized.dart';
 
 import '../monitorings/cache_alert_manager.dart';
 import '../monitorings/cache_monitoring.dart';
+import '../interfaces/disposable.dart';
 import '../interfaces/thread_safe_cache.dart';
 
 /// **Thread-safe MRU (Most Recently Used) Cache with Monitoring**
@@ -20,7 +21,8 @@ import '../interfaces/thread_safe_cache.dart';
 /// Implements the **MRU eviction policy**, meaning:
 /// - When the cache size exceeds `maxSize`, the **most recently used element is removed**.
 class MonitoredMRUCache<K, V> extends ThreadSafeCache<K, V>
-    with CacheMonitoring<K, V> {
+    with CacheMonitoring<K, V>
+    implements Disposable {
   final int maxSize;
   final LinkedHashMap<K, V> _cache = LinkedHashMap();
   final _lock = Lock();
@@ -63,8 +65,10 @@ class MonitoredMRUCache<K, V> extends ThreadSafeCache<K, V>
   ///
   /// **This method is thread-safe**.
   @override
-  Iterable<K> getKeys() {
-    return Map<K, V>.of(_cache).keys;
+  Future<Iterable<K>> getKeys() async {
+    return await _lock.synchronized(() {
+      return Map<K, V>.of(_cache).keys;
+    });
   }
 
   /// Retrieves the value for the specified key.
@@ -103,6 +107,7 @@ class MonitoredMRUCache<K, V> extends ThreadSafeCache<K, V>
         _cache.remove(key);
       } else if (_cache.length >= maxSize) {
         _evictMRUEntry(); // Perform eviction using MRU policy
+        metrics.recordEviction();
       }
       // Insert the key to mark it as the most recently used
       _cache[key] = value;
@@ -110,12 +115,28 @@ class MonitoredMRUCache<K, V> extends ThreadSafeCache<K, V>
   }
 
   /// Performs eviction (removal) using the MRU (Most Recently Used) policy.
-  Future<void> _evictMRUEntry() async {
+  void _evictMRUEntry() {
     if (_cache.isEmpty) return;
 
     // Remove the last added key (most recently used key)
     final K mruKey = _cache.keys.last;
     _cache.remove(mruKey);
+  }
+
+  /// Removes the entry with the given key from the cache.
+  ///
+  /// - If the key existed, records a manual eviction via [CacheMonitoring].
+  /// - If the key does not exist, this call is a no-op.
+  ///
+  /// **This method is thread-safe**.
+  @override
+  Future<void> remove(K key) async {
+    await _lock.synchronized(() {
+      if (_cache.containsKey(key)) {
+        _cache.remove(key);
+        metrics.recordEviction();
+      }
+    });
   }
 
   /// Clears the cache and removes all data.
@@ -127,6 +148,9 @@ class MonitoredMRUCache<K, V> extends ThreadSafeCache<K, V>
   Future<void> clear() async {
     await _lock.synchronized(_cache.clear);
   }
+
+  @override
+  void dispose() => _cacheAlertManager.dispose();
 
   /// Returns a string representation of the current state of the cache.
   ///

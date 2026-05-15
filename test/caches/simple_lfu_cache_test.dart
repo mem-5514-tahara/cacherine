@@ -88,6 +88,41 @@ void main() {
         ); // key3 should remain as it was newly added
       },
     );
+
+    test(
+      'set() on an existing key when cache is full does not evict any entry',
+      () {
+        final cache = SimpleLFUCache<String, String>(2);
+        cache.set('key1', 'value1');
+        cache.set('key2', 'value2');
+
+        cache.set('key1', 'new_value1');
+
+        expect(cache.get('key1'), equals('new_value1'));
+        expect(cache.get('key2'), equals('value2'));
+        expect(cache.getKeys().length, equals(2));
+      },
+    );
+
+    test('set() on an existing key does not reset its usage count', () {
+      final cache = SimpleLFUCache<String, String>(2);
+      cache.set('key1', 'value1');
+      cache.set('key2', 'value2');
+
+      // Boost key1's usage count
+      cache.get('key1');
+      cache.get('key1');
+
+      // Update key1 — count must be preserved, not reset to 1
+      cache.set('key1', 'updated');
+
+      // Inserting key3 forces eviction; key2 (count 1) must go, not key1 (count 3)
+      cache.set('key3', 'value3');
+
+      expect(cache.get('key2'), isNull);
+      expect(cache.get('key1'), equals('updated'));
+      expect(cache.get('key3'), equals('value3'));
+    });
   });
 
   group('SimpleLFUCache - Error Handling', () {
@@ -95,5 +130,41 @@ void main() {
       expect(() => SimpleLFUCache<String, String>(0), throwsArgumentError);
       expect(() => SimpleLFUCache<String, String>(-1), throwsArgumentError);
     });
+  });
+
+  group('SimpleLFUCache - remove()', () {
+    test('remove() existing key makes get() return null', () {
+      final cache = SimpleLFUCache<String, String>(3);
+      cache.set('key1', 'value1');
+      cache.remove('key1');
+      expect(cache.get('key1'), isNull);
+      expect(cache.getKeys(), isNot(contains('key1')));
+    });
+
+    test('remove() non-existent key is a no-op', () {
+      final cache = SimpleLFUCache<String, String>(3);
+      cache.set('key1', 'value1');
+      cache.remove('missing');
+      expect(cache.get('key1'), equals('value1'));
+      expect(cache.getKeys().length, equals(1));
+    });
+
+    test(
+      'remove() discards frequency counter so LFU ordering is unaffected',
+      () {
+        final cache = SimpleLFUCache<String, String>(2);
+        cache.set('key1', 'value1');
+        cache.set('key2', 'value2');
+        cache.get('key2'); // key2 freq=2, key1 freq=1
+        cache.remove('key1');
+        // Re-add key1 — should start fresh with freq=1
+        cache.set('key1', 'new1');
+        // key1 (freq=1) is LFU; inserting key3 should evict key1
+        cache.set('key3', 'value3');
+        expect(cache.get('key1'), isNull);
+        expect(cache.get('key2'), equals('value2'));
+        expect(cache.get('key3'), equals('value3'));
+      },
+    );
   });
 }

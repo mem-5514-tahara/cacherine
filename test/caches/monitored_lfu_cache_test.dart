@@ -95,7 +95,88 @@ void main() {
 
       expect(await cache.get('key1'), isNull);
       expect(await cache.get('key2'), isNull);
-      expect(cache.getKeys(), isEmpty);
+      expect(await cache.getKeys(), isEmpty);
+    });
+
+    test(
+      'set() on an existing key when cache is full does not evict any entry',
+      () async {
+        final cache = MonitoredLFUCache<String, String>(
+          maxSize: 2,
+          alertConfig: config,
+        );
+        await cache.set('key1', 'value1');
+        await cache.set('key2', 'value2');
+
+        await cache.set('key1', 'new_value1');
+
+        expect(await cache.get('key1'), equals('new_value1'));
+        expect(await cache.get('key2'), equals('value2'));
+        expect((await cache.getKeys()).length, equals(2));
+      },
+    );
+
+    test(
+      'set() on an existing key preserves its usage count (not reset to 1)',
+      () async {
+        final cache = MonitoredLFUCache<String, String>(
+          maxSize: 2,
+          alertConfig: config,
+        );
+        addTearDown(cache.dispose);
+        await cache.set('key1', 'value1');
+        await cache.set('key2', 'value2');
+
+        // Give key2 count=2 so a reset-to-1 on key1 would make key1 the LFU
+        await cache.get('key2');
+
+        // Boost key1's count to 5
+        await cache.get('key1');
+        await cache.get('key1');
+        await cache.get('key1');
+        await cache.get('key1');
+
+        // Update key1 via set — count must be preserved at 5, not reset to 1.
+        // If reset to 1, key1 (count 1) < key2 (count 2) → key1 would be
+        // evicted instead of key2, and the assertions below would fail.
+        await cache.set('key1', 'updated');
+
+        // Inserting key3 forces eviction; key2 (count 2) must go, not key1
+        await cache.set('key3', 'value3');
+
+        expect(await cache.get('key2'), isNull);
+        expect(await cache.get('key1'), equals('updated'));
+        expect(await cache.get('key3'), equals('value3'));
+      },
+    );
+
+    test('set() on an existing key does not inflate its usage count', () async {
+      // Regression: repeated set() calls must not increment the usage count.
+      final cache = MonitoredLFUCache<String, String>(
+        maxSize: 2,
+        alertConfig: config,
+      );
+      addTearDown(cache.dispose);
+      await cache.set('keyA', 'valueA');
+      await cache.set('keyB', 'valueB');
+
+      // Boost keyA's count to 4 via three get() calls (1 initial + 3 gets)
+      await cache.get('keyA');
+      await cache.get('keyA');
+      await cache.get('keyA');
+
+      // Update keyB four times via set(); count must remain 1
+      await cache.set('keyB', 'update1');
+      await cache.set('keyB', 'update2');
+      await cache.set('keyB', 'update3');
+      await cache.set('keyB', 'update4');
+
+      // Insert keyC — eviction must remove keyB (count 1), not keyA (count 4)
+      await cache.set('keyC', 'valueC');
+
+      expect(await cache.get('keyB'), isNull);
+      expect(await cache.get('keyA'), equals('valueA'));
+      expect(await cache.get('keyC'), equals('valueC'));
     });
 
     test('Should throw an exception if maxSize is 0 or negative', () {
@@ -104,6 +185,56 @@ void main() {
             MonitoredLFUCache<String, String>(maxSize: 0, alertConfig: config),
         throwsArgumentError,
       );
+    });
+  });
+
+  group('MonitoredLFUCache - remove()', () {
+    final config = CacheAlertConfig(notifyCallback: (_) {});
+
+    test('remove() existing key records eviction in metrics', () async {
+      final cache = MonitoredLFUCache<String, String>(
+        maxSize: 3,
+        alertConfig: config,
+      );
+      await cache.set('key1', 'value1');
+      await cache.remove('key1');
+      expect(await cache.get('key1'), isNull);
+      final stats = cache.metrics.getRecentStats(const Duration(minutes: 1));
+      expect(stats['evictions_per_minute'], equals(1));
+    });
+
+    test('remove() non-existent key does not record eviction', () async {
+      final cache = MonitoredLFUCache<String, String>(
+        maxSize: 3,
+        alertConfig: config,
+      );
+      await cache.remove('missing');
+      final stats = cache.metrics.getRecentStats(const Duration(minutes: 1));
+      expect(stats['evictions_per_minute'], equals(0));
+    });
+
+    test('capacity eviction via set() records eviction in metrics', () async {
+      final cache = MonitoredLFUCache<String, String>(
+        maxSize: 2,
+        alertConfig: config,
+      );
+      await cache.set('key1', 'value1');
+      await cache.set('key2', 'value2');
+      await cache.set(
+        'key3',
+        'value3',
+      ); // triggers LFU eviction of key1 or key2
+      final stats = cache.metrics.getRecentStats(const Duration(minutes: 1));
+      expect(stats['evictions_per_minute'], equals(1));
+    });
+
+    test('dispose() implements Disposable and stops the timer', () {
+      final cache = MonitoredLFUCache<String, String>(
+        maxSize: 3,
+        alertConfig: config,
+      );
+      expect(cache, isA<Disposable>());
+      expect(cache.dispose, returnsNormally);
     });
   });
 }

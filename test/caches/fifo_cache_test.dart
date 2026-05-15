@@ -25,7 +25,7 @@ void main() {
 
       expect(await cache.get('key1'), isNull);
       expect(await cache.get('key2'), isNull);
-      expect(cache.getKeys(), isEmpty);
+      expect(await cache.getKeys(), isEmpty);
     });
 
     test('getKeys() works correctly (returns current keys)', () async {
@@ -34,11 +34,14 @@ void main() {
       await cache.set('key2', 'value2');
       await cache.set('key3', 'value3');
 
-      expect(cache.getKeys(), containsAll(['key1', 'key2', 'key3']));
+      expect(await cache.getKeys(), containsAll(['key1', 'key2', 'key3']));
 
       await cache.set('key4', 'value4'); // 'key1' will be removed
-      expect(cache.getKeys(), containsAll(['key2', 'key3', 'key4']));
-      expect(cache.getKeys(), isNot(contains('key1'))); // 'key1' is removed
+      expect(await cache.getKeys(), containsAll(['key2', 'key3', 'key4']));
+      expect(
+        await cache.getKeys(),
+        isNot(contains('key1')),
+      ); // 'key1' is removed
     });
 
     test('Cache string representation (testing toString())', () async {
@@ -77,14 +80,33 @@ void main() {
         await cache.set('key2', 'value2');
         await cache.set('key1', 'new_value1'); // Order does not change
 
-        await cache.set('key3', 'value3'); // key2 will be evicted (FIFO order)
+        await cache.set(
+          'key3',
+          'value3',
+        ); // key1 will be evicted (FIFO order, key1 is oldest)
 
-        expect(await cache.get('key2'), isNull); // key2 should be removed
         expect(
           await cache.get('key1'),
-          equals('new_value1'),
-        ); // key1 should remain with new value
+          isNull,
+        ); // key1 should be removed (oldest)
+        expect(await cache.get('key2'), equals('value2')); // key2 should remain
         expect(await cache.get('key3'), equals('value3')); // key3 should be set
+      },
+    );
+
+    test(
+      'Updating an existing key at capacity does not evict any entry',
+      () async {
+        final cache = FIFOCache<String, String>(3);
+        await cache.set('A', 'valueA');
+        await cache.set('B', 'valueB');
+        await cache.set('C', 'valueC');
+
+        await cache.set('B', 'newValueB'); // update existing key — no eviction
+
+        expect((await cache.getKeys()).length, equals(3));
+        expect(await cache.getKeys(), containsAll(['A', 'B', 'C']));
+        expect(await cache.get('B'), equals('newValueB'));
       },
     );
   });
@@ -106,10 +128,10 @@ void main() {
       await Future.wait(futures);
 
       // Confirm that only 5 items remain in the cache
-      expect(cache.getKeys().length, equals(5));
+      expect((await cache.getKeys()).length, equals(5));
 
       // keys 0 to 4 should exist in the cache
-      final keys = cache.getKeys();
+      final keys = await cache.getKeys();
       expect(keys, containsAll([0, 1, 2, 3, 4]));
     });
 
@@ -125,7 +147,7 @@ void main() {
       expect(await cache.get('key1'), isNull);
       expect(await cache.get('key2'), isNull);
       expect(await cache.get('key3'), isNull);
-      expect(cache.getKeys(), isEmpty);
+      expect(await cache.getKeys(), isEmpty);
     });
   });
 
@@ -133,6 +155,30 @@ void main() {
     test('Throws ArgumentError when maxSize is 0 or less', () {
       expect(() => FIFOCache<String, String>(0), throwsArgumentError);
       expect(() => FIFOCache<String, String>(-1), throwsArgumentError);
+    });
+  });
+
+  group('FIFOCache - remove()', () {
+    test('remove() existing key makes subsequent get() return null', () async {
+      final cache = FIFOCache<String, String>(3);
+      await cache.set('key1', 'value1');
+      await cache.remove('key1');
+      expect(await cache.get('key1'), isNull);
+      expect(await cache.getKeys(), isNot(contains('key1')));
+    });
+
+    test('remove() non-existent key is a no-op', () async {
+      final cache = FIFOCache<String, String>(3);
+      await cache.set('key1', 'value1');
+      await cache.remove('missing');
+      expect(await cache.get('key1'), equals('value1'));
+      expect((await cache.getKeys()).length, equals(1));
+    });
+
+    test('remove() Future completes without error', () async {
+      final cache = FIFOCache<String, String>(3);
+      await cache.set('key1', 'value1');
+      await expectLater(cache.remove('key1'), completes);
     });
   });
 }

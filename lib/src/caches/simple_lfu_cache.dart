@@ -57,6 +57,10 @@ class SimpleLFUCache<K, V> extends SimpleCache<K, V> {
   /// **This method is not thread-safe.**
   @override
   void set(K key, V value) {
+    if (_cache.containsKey(key)) {
+      _cache[key] = value;
+      return;
+    }
     if (_cache.length >= maxSize) {
       _evictLFUEntry(); // Evict based on LFU policy
     }
@@ -75,6 +79,18 @@ class SimpleLFUCache<K, V> extends SimpleCache<K, V> {
     // Remove the key
     _cache.remove(lfuKey);
     _usageCounts.remove(lfuKey);
+  }
+
+  /// Removes the entry with the given key from the cache.
+  ///
+  /// - If the key does not exist, this call is a no-op.
+  /// - The frequency counter for the key is also discarded.
+  ///
+  /// **This method is not thread-safe.**
+  @override
+  void remove(K key) {
+    _cache.remove(key);
+    _usageCounts.remove(key);
   }
 
   /// Clears all data stored in the cache.

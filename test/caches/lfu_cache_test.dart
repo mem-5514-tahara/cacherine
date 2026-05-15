@@ -25,7 +25,7 @@ void main() {
 
       expect(await cache.get('key1'), isNull);
       expect(await cache.get('key2'), isNull);
-      expect(cache.getKeys(), isEmpty);
+      expect(await cache.getKeys(), isEmpty);
     });
   });
 
@@ -59,6 +59,78 @@ void main() {
         ); // key3 is newly added and should remain
       },
     );
+
+    test(
+      'set() on an existing key when cache is full does not evict any entry',
+      () async {
+        final cache = LFUCache<String, String>(2);
+        await cache.set('key1', 'value1');
+        await cache.set('key2', 'value2');
+
+        await cache.set('key1', 'new_value1');
+
+        expect(await cache.get('key1'), equals('new_value1'));
+        expect(await cache.get('key2'), equals('value2'));
+        expect((await cache.getKeys()).length, equals(2));
+      },
+    );
+
+    test(
+      'set() on an existing key preserves its usage count (not reset to 1)',
+      () async {
+        final cache = LFUCache<String, String>(2);
+        await cache.set('key1', 'value1');
+        await cache.set('key2', 'value2');
+
+        // Give key2 count=2 so a reset-to-1 on key1 would make key1 the LFU
+        await cache.get('key2');
+
+        // Boost key1's count to 5
+        await cache.get('key1');
+        await cache.get('key1');
+        await cache.get('key1');
+        await cache.get('key1');
+
+        // Update key1 via set — count must be preserved at 5, not reset to 1.
+        // If reset to 1, key1 (count 1) < key2 (count 2) → key1 would be
+        // evicted instead of key2, and the assertions below would fail.
+        await cache.set('key1', 'updated');
+
+        // Inserting key3 forces eviction; key2 (count 2) must go, not key1
+        await cache.set('key3', 'value3');
+
+        expect(await cache.get('key2'), isNull);
+        expect(await cache.get('key1'), equals('updated'));
+        expect(await cache.get('key3'), equals('value3'));
+      },
+    );
+
+    test('set() on an existing key does not inflate its usage count', () async {
+      // Regression: repeated set() calls must not increment the usage count.
+      // If they did, the count could exceed that of a key boosted via get(),
+      // causing the wrong key to be evicted.
+      final cache = LFUCache<String, String>(2);
+      await cache.set('keyA', 'valueA');
+      await cache.set('keyB', 'valueB');
+
+      // Boost keyA's count to 4 via three get() calls (1 initial + 3 gets)
+      await cache.get('keyA');
+      await cache.get('keyA');
+      await cache.get('keyA');
+
+      // Update keyB four times via set(); count must remain 1
+      await cache.set('keyB', 'update1');
+      await cache.set('keyB', 'update2');
+      await cache.set('keyB', 'update3');
+      await cache.set('keyB', 'update4');
+
+      // Insert keyC — eviction must remove keyB (count 1), not keyA (count 4)
+      await cache.set('keyC', 'valueC');
+
+      expect(await cache.get('keyB'), isNull);
+      expect(await cache.get('keyA'), equals('valueA'));
+      expect(await cache.get('keyC'), equals('valueC'));
+    });
   });
 
   group('LFUCache - Thread-safety Tests', () {
@@ -76,7 +148,7 @@ void main() {
 
       await Future.wait(futures);
       expect(
-        cache.getKeys().length,
+        (await cache.getKeys()).length,
         lessThanOrEqualTo(5),
       ); // Only 5 keys should remain
     });
@@ -92,7 +164,7 @@ void main() {
       expect(await cache.get('key1'), isNull);
       expect(await cache.get('key2'), isNull);
       expect(await cache.get('key3'), isNull);
-      expect(cache.getKeys(), isEmpty);
+      expect(await cache.getKeys(), isEmpty);
     });
   });
 
@@ -100,6 +172,30 @@ void main() {
     test('Throws ArgumentError when maxSize is 0 or less', () {
       expect(() => LFUCache<String, String>(0), throwsArgumentError);
       expect(() => LFUCache<String, String>(-1), throwsArgumentError);
+    });
+  });
+
+  group('LFUCache - remove()', () {
+    test('remove() existing key makes subsequent get() return null', () async {
+      final cache = LFUCache<String, String>(3);
+      await cache.set('key1', 'value1');
+      await cache.remove('key1');
+      expect(await cache.get('key1'), isNull);
+      expect(await cache.getKeys(), isNot(contains('key1')));
+    });
+
+    test('remove() non-existent key is a no-op', () async {
+      final cache = LFUCache<String, String>(3);
+      await cache.set('key1', 'value1');
+      await cache.remove('missing');
+      expect(await cache.get('key1'), equals('value1'));
+      expect((await cache.getKeys()).length, equals(1));
+    });
+
+    test('remove() Future completes without error', () async {
+      final cache = LFUCache<String, String>(3);
+      await cache.set('key1', 'value1');
+      await expectLater(cache.remove('key1'), completes);
     });
   });
 }

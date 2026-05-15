@@ -7,8 +7,8 @@
 abstract class ThreadSafeCache<K, V> {
   /// **Retrieves all keys stored in the cache.**
   ///
-  /// **Returns:** A list of all keys in the cache.
-  Iterable<K> getKeys();
+  /// **Returns:** A snapshot of all keys in the cache at the time of the call.
+  Future<Iterable<K>> getKeys();
 
   /// **Retrieves the value associated with the specified key (asynchronously).**
   ///
@@ -28,6 +28,15 @@ abstract class ThreadSafeCache<K, V> {
   /// - `key`: The key for the data to store.
   /// - `value`: The value of the data to store.
   Future<void> set(K key, V value);
+
+  /// **Removes the entry with the given key from the cache (asynchronously).**
+  ///
+  /// - If the key does not exist, this call is a no-op.
+  /// - The operation is executed inside the instance's lock to prevent data races.
+  ///
+  /// **Arguments:**
+  /// - `key`: The key of the entry to remove.
+  Future<void> remove(K key);
 
   /// **Removes all data stored in the cache (asynchronously).**
   Future<void> clear();

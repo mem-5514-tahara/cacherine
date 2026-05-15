@@ -32,8 +32,10 @@ class MRUCache<K, V> extends ThreadSafeCache<K, V> {
   ///
   /// **This method is thread-safe.**
   @override
-  Iterable<K> getKeys() {
-    return Map<K, V>.of(_cache).keys;
+  Future<Iterable<K>> getKeys() async {
+    return await _lock.synchronized(() {
+      return Map<K, V>.of(_cache).keys;
+    });
   }
 
   /// **Retrieves the value associated with the specified key.**
@@ -77,12 +79,24 @@ class MRUCache<K, V> extends ThreadSafeCache<K, V> {
   }
 
   /// **Evicts the most recently used (MRU) entry.**
-  Future<void> _evictMRUEntry() async {
+  void _evictMRUEntry() {
     if (_cache.isEmpty) return;
 
     // Remove the last added key (most recently used key)
     final K mruKey = _cache.keys.last;
     _cache.remove(mruKey);
+  }
+
+  /// Removes the entry with the given key from the cache.
+  ///
+  /// - If the key does not exist, this call is a no-op.
+  ///
+  /// **This method is thread-safe.**
+  @override
+  Future<void> remove(K key) async {
+    await _lock.synchronized(() {
+      _cache.remove(key);
+    });
   }
 
   /// Clears the cache, removing all stored data.

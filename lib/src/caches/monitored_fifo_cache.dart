@@ -4,6 +4,7 @@ import 'package:synchronized/synchronized.dart';
 
 import '../monitorings/cache_alert_manager.dart';
 import '../monitorings/cache_monitoring.dart';
+import '../interfaces/disposable.dart';
 import '../interfaces/thread_safe_cache.dart';
 
 /// **Thread-safe FIFO (First In, First Out) Cache with Monitoring**
@@ -21,7 +22,8 @@ import '../interfaces/thread_safe_cache.dart';
 /// This cache implements the **FIFO eviction policy**, and:
 /// - When the cache size exceeds `maxSize`, the oldest element is removed.
 class MonitoredFIFOCache<K, V> extends ThreadSafeCache<K, V>
-    with CacheMonitoring<K, V> {
+    with CacheMonitoring<K, V>
+    implements Disposable {
   final int maxSize;
   final LinkedHashMap<K, V> _cache = LinkedHashMap();
   final _lock = Lock();
@@ -64,8 +66,10 @@ class MonitoredFIFOCache<K, V> extends ThreadSafeCache<K, V>
   ///
   /// **This method is thread-safe**, taking a snapshot of the cache before returning the keys.
   @override
-  Iterable<K> getKeys() {
-    return Map<K, V>.of(_cache).keys;
+  Future<Iterable<K>> getKeys() async {
+    return await _lock.synchronized(() {
+      return Map<K, V>.of(_cache).keys;
+    });
   }
 
   /// Retrieves the value for the specified key.
@@ -93,12 +97,29 @@ class MonitoredFIFOCache<K, V> extends ThreadSafeCache<K, V>
   @override
   Future<void> set(K key, V value) async {
     await _lock.synchronized(() {
-      if (_cache.length >= maxSize) {
+      if (!_cache.containsKey(key) && _cache.length >= maxSize) {
         _cache.remove(
           _cache.keys.first,
         ); // Remove the oldest element based on FIFO policy
+        metrics.recordEviction();
       }
       _cache[key] = value; // Update value (position remains unchanged)
+    });
+  }
+
+  /// Removes the entry with the given key from the cache.
+  ///
+  /// - If the key existed, records a manual eviction via [CacheMonitoring].
+  /// - If the key does not exist, this call is a no-op.
+  ///
+  /// **This method is thread-safe.**
+  @override
+  Future<void> remove(K key) async {
+    await _lock.synchronized(() {
+      if (_cache.containsKey(key)) {
+        _cache.remove(key);
+        metrics.recordEviction();
+      }
     });
   }
 
@@ -111,6 +132,9 @@ class MonitoredFIFOCache<K, V> extends ThreadSafeCache<K, V>
   Future<void> clear() async {
     await _lock.synchronized(_cache.clear);
   }
+
+  @override
+  void dispose() => _cacheAlertManager.dispose();
 
   /// Returns a string representation of the current state of the cache.
   ///
